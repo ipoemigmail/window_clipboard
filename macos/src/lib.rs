@@ -15,8 +15,8 @@
 use objc2::rc::Id;
 use objc2::runtime::{AnyClass, AnyObject, ProtocolObject};
 use objc2::{msg_send_id, ClassType};
-use objc2_app_kit::NSPasteboard;
-use objc2_foundation::{NSArray, NSString};
+use objc2_app_kit::{NSPasteboard, NSPasteboardItem};
+use objc2_foundation::{NSArray, NSObject, NSString};
 use std::error::Error;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 
@@ -67,6 +67,41 @@ impl Clipboard {
         // `readObjectsForClasses:options:`.
         let obj: *mut NSString = obj as _;
         Ok(unsafe { Id::retain(obj) }.unwrap().to_string())
+    }
+
+    pub fn read_buffer(&self) -> Result<Vec<String>, Box<dyn Error>> {
+        // The NSPasteboard API is a bit weird, it requires you to pass
+        // classes as objects, which `objc2_foundation::NSArray` was not really
+        // made for - so we convert the class to an `AnyObject` type instead.
+        //
+        // TODO: Use the NSPasteboard helper APIs (`stringForType`).
+        let string_class = {
+            let cls: *const AnyClass = NSPasteboardItem::class();
+            let cls = cls as *mut AnyObject;
+            unsafe { Id::retain(cls).unwrap() }
+        };
+        let classes = NSArray::from_vec(vec![string_class]);
+        let string_array = unsafe {
+            self.pasteboard
+                .readObjectsForClasses_options(&classes, None)
+        }
+        .ok_or("pasteboard#readObjectsForClasses:options: returned null")?;
+
+        let obj: *const AnyObject = string_array.first().ok_or(
+            "pasteboard#readObjectsForClasses:options: returned empty",
+        )?;
+        // And this part is weird as well, since we now have to convert the object
+        // into an NSString, which we know it to be since that's what we told
+        // `readObjectsForClasses:options:`.
+        let obj: *mut NSPasteboardItem = obj as _;
+        let ss = unsafe { Id::retain(obj) }.unwrap();
+        let ss = unsafe { ss.types() };
+        let mut v = Vec::new();
+        for i in 0..ss.count() {
+            let s = ss.get(i).unwrap();
+            v.push(s.to_string());
+        }
+        Ok(v)
     }
 
     pub fn write(&mut self, data: String) -> Result<(), Box<dyn Error>> {
