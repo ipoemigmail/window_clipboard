@@ -16,7 +16,7 @@ use objc2::rc::Id;
 use objc2::runtime::{AnyClass, AnyObject, ProtocolObject};
 use objc2::{msg_send_id, ClassType};
 use objc2_app_kit::{NSPasteboard, NSPasteboardItem};
-use objc2_foundation::{NSArray, NSData, NSObject, NSString};
+use objc2_foundation::{NSArray, NSData, NSString};
 use std::error::Error;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 
@@ -69,7 +69,7 @@ impl Clipboard {
         Ok(unsafe { Id::retain(obj) }.unwrap().to_string())
     }
 
-    pub fn read_data(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn read_data(&self) -> Result<(String, Vec<u8>), Box<dyn Error>> {
         // The NSPasteboard API is a bit weird, it requires you to pass
         // classes as objects, which `objc2_foundation::NSArray` was not really
         // made for - so we convert the class to an `AnyObject` type instead.
@@ -95,7 +95,11 @@ impl Clipboard {
         // `readObjectsForClasses:options:`.
         let obj: *mut NSPasteboardItem = obj as _;
         let ss = unsafe { Id::retain(obj) }.unwrap();
-        let ns = unsafe {
+        let ns1 = unsafe {
+            ss.dataForType(&NSString::from_str("public.utf8-plain-text"))
+        }
+        .unwrap();
+        let ns2 = unsafe {
             ss.dataForType(&NSString::from_str(
                 "com.kakao.kakaoTalk.emoji.attachment",
             ))
@@ -107,7 +111,7 @@ impl Clipboard {
         //     let s = ss.get(i).unwrap();
         //     v.push(s.to_string());
         // }
-        Ok(ns.bytes().to_vec())
+        Ok((String::from_utf8_lossy(&ns1.bytes()).to_string(), ns2.bytes().to_vec()))
     }
 
     pub fn read_buffer(&self) -> Result<Vec<String>, Box<dyn Error>> {
@@ -149,6 +153,47 @@ impl Clipboard {
         let string_array = NSArray::from_vec(vec![ProtocolObject::from_id(
             NSString::from_str(&data),
         )]);
+        unsafe { self.pasteboard.clearContents() };
+        let success = unsafe { self.pasteboard.writeObjects(&string_array) };
+        if success {
+            Ok(())
+        } else {
+            Err("NSPasteboard#writeObjects: returned false".into())
+        }
+    }
+
+    pub fn write_data(
+        &mut self,
+        s: &str,
+        data: Vec<u8>,
+    ) -> Result<(), Box<dyn Error>> {
+        let p1 = s.as_ptr() as *mut std::ffi::c_void;
+        let ns_data1 = unsafe {
+            NSData::initWithBytes_length(
+                NSData::alloc(),
+                p1,
+                s.as_bytes().len(),
+            )
+        };
+        let p2 = data.as_ptr() as *mut std::ffi::c_void;
+        let ns_data2 = unsafe {
+            NSData::initWithBytes_length(NSData::alloc(), p2, data.len())
+        };
+        let item = unsafe { NSPasteboardItem::init(NSPasteboardItem::alloc()) };
+        unsafe {
+            item.setData_forType(
+                &ns_data1,
+                &NSString::from_str("public.utf8-plain-text"),
+            )
+        };
+        unsafe {
+            item.setData_forType(
+                &ns_data2,
+                &NSString::from_str("com.kakao.kakaoTalk.emoji.attachment"),
+            )
+        };
+        let string_array =
+            NSArray::from_vec(vec![ProtocolObject::from_id(item)]);
         unsafe { self.pasteboard.clearContents() };
         let success = unsafe { self.pasteboard.writeObjects(&string_array) };
         if success {
