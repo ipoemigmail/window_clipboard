@@ -69,7 +69,9 @@ impl Clipboard {
         Ok(unsafe { Id::retain(obj) }.unwrap().to_string())
     }
 
-    pub fn read_data(&self) -> Result<(String, Vec<u8>), Box<dyn Error>> {
+    pub fn read_data(
+        &self,
+    ) -> Result<(Option<String>, Option<Vec<u8>>), Box<dyn Error>> {
         // The NSPasteboard API is a bit weird, it requires you to pass
         // classes as objects, which `objc2_foundation::NSArray` was not really
         // made for - so we convert the class to an `AnyObject` type instead.
@@ -95,23 +97,25 @@ impl Clipboard {
         // `readObjectsForClasses:options:`.
         let obj: *mut NSPasteboardItem = obj as _;
         let ss = unsafe { Id::retain(obj) }.unwrap();
-        let ns1 = unsafe {
+        let maybe_ns1 = unsafe {
             ss.dataForType(&NSString::from_str("public.utf8-plain-text"))
-        }
-        .unwrap();
-        let ns2 = unsafe {
+        };
+        let maybe_ns2 = unsafe {
             ss.dataForType(&NSString::from_str(
                 "com.kakao.kakaoTalk.emoji.attachment",
             ))
-        }
-        .unwrap();
+        };
         // let ss = unsafe { ss.types() };
         // let mut v = Vec::new();
         // for i in 0..ss.count() {
         //     let s = ss.get(i).unwrap();
         //     v.push(s.to_string());
         // }
-        Ok((String::from_utf8_lossy(&ns1.bytes()).to_string(), ns2.bytes().to_vec()))
+        Ok((
+            maybe_ns1
+                .map(|ns1| String::from_utf8_lossy(&ns1.bytes()).to_string()),
+            maybe_ns2.map(|ns2| ns2.bytes().to_vec()),
+        ))
     }
 
     pub fn read_buffer(&self) -> Result<Vec<String>, Box<dyn Error>> {
